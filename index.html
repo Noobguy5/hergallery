@@ -847,9 +847,8 @@ const CONFIG={
 };
 
 /* ---------------- 2. discovery ----------------
-   fetch HEAD first (cheap); if HEAD is unsupported (file://, some static
-   servers) fall back to decoding with an Image (photos) or a tiny
-   preload="metadata" video element (videos). */
+   Media discovery uses the actual Image/video element instead of HEAD
+   requests, which is more reliable on static hosts such as GitHub Pages. */
 function probeImage(url){
   return new Promise(res=>{
     const im=new Image();
@@ -875,31 +874,27 @@ function probeVideo(url){
     setTimeout(()=>done(false),7000);
   });
 }
-let headSupported=null;
+/* GitHub Pages fix: do not use HEAD requests for media discovery.
+   Some static/CDN paths can return a misleading HEAD response even when
+   the actual image/video GET works. Probe the media element itself instead. */
+const probeCache=new Map();
 async function exists(url){
-  if(headSupported!==false){
-    try{
-      const r=await fetch(url,{method:"HEAD"});
-      if(r.ok){headSupported=true;return true}
-      if(r.status===404){headSupported=true;return false}
-      /* 405/501 → HEAD ignored; fall through to element probing */
-    }catch(e){/* file:// or offline → fall through */}
-  }
-  return /\.(mp4|webm|mov|m4v|ogv)$/i.test(url)?probeVideo(url):probeImage(url);
+  if(probeCache.has(url)) return probeCache.get(url);
+  const promise = /\.(mp4|webm|mov|m4v|ogv)$/i.test(url)
+    ? probeVideo(url)
+    : probeImage(url);
+  probeCache.set(url,promise);
+  return promise;
 }
 
 /* ---------------- 2b. series scan discovery ----------------
-   PERF: instead of probing every extension for every number (800 photos
-   × 7 extensions ≈ 5,600 requests), scan each extension as a series and
-   stop the moment a run of misses is long enough that numbering has
-   clearly ended. Real contiguous collections settle in ~1 request per
-   file, and only the final extension ever walks past the last file.
-   MAX_* remains the hard ceiling in every mode. */
+   PERF: scan each extension as a series and stop the moment a run of
+   misses is long enough that numbering has clearly ended. MAX_* remains
+   the hard ceiling. The existing gallery behavior is otherwise unchanged. */
 const SCAN={
   MISS_LIMIT:5,     /* consecutive misses after the last hit → done */
   STEP:40           /* long-range jumping before/after the linear fill */
 };
-const probeCache=new Map();
 function urlOf(base,ext){return base+"."+ext}
 async function scanSeries(base,exts,max,onProgress,tag){
   const found=new Map();
