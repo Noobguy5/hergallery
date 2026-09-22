@@ -897,25 +897,19 @@ const SCAN={
 };
 function urlOf(base,ext){return base+"."+ext}
 async function scanSeries(base,exts,max,onProgress,tag){
+  /* Direct sequential discovery: photos are .jpg and videos are .mp4.
+     No HEAD requests and no alternate-extension probing. */
   const found=new Map();
-  for(const ext of exts){
-    let misses=0;
-    /* phase A — long-range probe (max/STEP requests, full coverage) */
-    let hi=0;
-    for(let n=1;n<=max;n+=SCAN.STEP){
-      if(await exists(urlOf(base+n,ext)))hi=n;
-    }
-    if(!hi)continue;                            /* extension unused */
-    /* phase B — fill the holes between confirmed hits */
-    for(let n=1;n<hi;n++){
-      if(!found.has(n)&&await exists(urlOf(base+n,ext)))found.set(n,ext);
-    }
-    /* phase C — walk the tail, stop after MISS_LIMIT straight misses */
-    for(let n=hi;;n++){
-      if(found.has(n))continue;
-      if(await exists(urlOf(base+n,ext))){found.set(n,ext);misses=0}
-      else if(++misses>=SCAN.MISS_LIMIT)break;
-      if(n>=max)break;
+  const ext=(exts&&exts[0])||((tag==="video")?"mp4":"jpg");
+  let misses=0;
+  for(let n=1;n<=max;n++){
+    const url=urlOf(base+n,ext);
+    if(await exists(url)){
+      found.set(n,ext);
+      misses=0;
+    }else{
+      misses++;
+      if(misses>=SCAN.MISS_LIMIT)break;
     }
   }
   return found;
@@ -925,13 +919,13 @@ async function discoverMedia(onProgress){
   for(const m of CONFIG.EXTRA_MEDIA){
     list.push({type:m.type==="video"?"video":"photo",num:list.length+1,src:m.src,note:m.note||"",cover:null});
   }
-  const pMap=await scanSeries("photo",CONFIG.PHOTO_EXTS,CONFIG.MAX_PHOTOS,onProgress,"photo");
-  const vMap=await scanSeries("video",CONFIG.VIDEO_EXTS,CONFIG.MAX_VIDEOS,onProgress,"video");
+  const pMap=await scanSeries("photo",["jpg"],CONFIG.MAX_PHOTOS,onProgress,"photo");
+  const vMap=await scanSeries("video",["mp4"],CONFIG.MAX_VIDEOS,onProgress,"video");
   /* optional per-video poster overrides + auto covers */
   for(const [n] of vMap){
     const cov=(CONFIG.VIDEO_COVERS.find(c=>c.index===n)||{}).src
       || (await exists(urlOf("cover"+n,"jpg"))?"cover"+n+".jpg":null);
-    if(cov)vMap.set(n,{ext:vMap.get(n),cover:cov});
+    if(cov)vMap.set(n,{ext:"mp4",cover:cov});
   }
   for(const [n,ext] of pMap)list.push({type:"photo",num:n,src:"photo"+n+"."+ext,note:"",cover:null});
   for(const [n,v] of vMap)list.push({type:"video",num:n,src:"video"+n+"."+(v.ext||v),cover:v.cover||null,note:""});
